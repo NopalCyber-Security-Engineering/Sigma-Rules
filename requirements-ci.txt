@@ -1,0 +1,6 @@
+# Pinned for reproducible CI as of 2026-09-28.
+pysigma==1.5.1
+sigma-cli==3.1.0
+pysigma-backend-kusto==1.0.1
+PyYAML==6.0.3
+jsonschema==4.26.0

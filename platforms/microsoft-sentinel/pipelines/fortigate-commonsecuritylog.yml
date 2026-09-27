@@ -1,0 +1,24 @@
+name: Fortinet FortiGate to Microsoft Sentinel CommonSecurityLog
+priority: 1
+transformations:
+  - id: set_timestamp_field
+    type: set_state
+    key: timestamp_field
+    val: TimeGenerated
+  - id: set_commonsecuritylog_table
+    type: set_state
+    key: query_table
+    val:
+      - CommonSecurityLog
+  - id: map_fortigate_fields
+    type: field_name_mapping
+    mapping:
+      Vendor: DeviceVendor
+      Product: DeviceProduct
+      Activity: Activity
+      Outcome: EventOutcome
+      Action: SimplifiedDeviceAction
+      SourceIP: SourceIP
+      DestinationIP: DestinationIP
+      DestinationPort: DestinationPort
+      User: SourceUserName

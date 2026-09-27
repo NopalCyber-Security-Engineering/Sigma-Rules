@@ -1,0 +1,30 @@
+title: FortiGate Denied Remote Service Connection
+id: b982f0b1-4980-4618-93fe-eae41d51f713
+status: test
+description: >-
+  Detects FortiGate denied traffic to common remote administration service ports.
+  This is a disposable Detection-as-Code pipeline sample and is not intended to
+  be enabled in production without validating the customer's policy and traffic.
+author: Detection Engineering Team
+date: 2026-09-28
+tags:
+  - attack.lateral_movement
+  - attack.t1021
+logsource:
+  product: fortinet
+  service: fortigate
+  category: firewall
+detection:
+  selection:
+    Vendor: Fortinet
+    Product|contains: FortiGate
+    Action: Deny
+    DestinationPort:
+      - 22
+      - 3389
+      - 5985
+      - 5986
+  condition: selection
+falsepositives:
+  - Expected blocked administrative traffic from approved scanning or management systems.
+level: low

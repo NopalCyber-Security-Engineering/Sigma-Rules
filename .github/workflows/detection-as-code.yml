@@ -1,0 +1,108 @@
+name: Detection as Code - Microsoft Sentinel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Solutions/**'
+      - 'platforms/microsoft-sentinel/**'
+      - 'tools/**'
+      - 'tests/**'
+      - 'requirements-ci.txt'
+      - '.github/workflows/detection-as-code.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sentinel-dac-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Sigma source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+
+      - name: Install pinned compiler toolchain
+        run: python -m pip install -r requirements-ci.txt
+
+      - name: Validate project
+        run: python tools/validate.py
+
+      - name: Compile, wrap, and render Sentinel ARM
+        run: python tools/build.py --compiler pysigma --output build/ms-sentinel
+
+      - name: Verify generated content
+        run: python tools/verify_output.py build/ms-sentinel
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Write pipeline summary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          manifest = json.loads(Path('build/ms-sentinel/_build/build-manifest.json').read_text())
+          rules = sum(len(v['rules']) for v in manifest['clients'].values())
+          clients = len(manifest['clients'])
+          out = Path(os.environ['GITHUB_STEP_SUMMARY'])
+          out.write_text(
+              '# Detection-as-Code build\n\n'
+              f'- Source rules: **2**\n'
+              f'- Client roots: **{clients}**\n'
+              f'- Generated Sentinel ARM templates: **{rules}**\n'
+              f'- Compiler: **pySigma / Kusto backend**\n'
+              f'- Generated rule state: **disabled**\n'
+              f'- Cross-repo publish: **{"enabled" if os.getenv("PUBLISH_ENABLED") == "true" else "disabled"}**\n'
+          )
+          PY
+        env:
+          PUBLISH_ENABLED: ${{ vars.PUBLISH_ENABLED }}
+
+      - name: Upload generated Sentinel content
+        uses: actions/upload-artifact@v7
+        with:
+          name: ms-sentinel-generated
+          path: build/ms-sentinel/
+          if-no-files-found: error
+
+      - name: Checkout MS-Sentinel target repository
+        if: ${{ vars.PUBLISH_ENABLED == 'true' }}
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ vars.MS_SENTINEL_REPOSITORY }}
+          token: ${{ secrets.MS_SENTINEL_REPO_TOKEN }}
+          path: target-ms-sentinel
+
+      - name: Publish generated client roots
+        if: ${{ vars.PUBLISH_ENABLED == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ vars.MS_SENTINEL_REPOSITORY }}"
+          test -n "${{ secrets.MS_SENTINEL_REPO_TOKEN }}"
+          mkdir -p target-ms-sentinel/Clients target-ms-sentinel/_build
+          rsync -a --delete build/ms-sentinel/Clients/ target-ms-sentinel/Clients/
+          cp build/ms-sentinel/_build/build-manifest.json target-ms-sentinel/_build/build-manifest.json
+          cd target-ms-sentinel
+          git add Clients _build/build-manifest.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes to publish.'
+            exit 0
+          fi
+          git config user.name 'detection-as-code-bot'
+          git config user.email 'detection-as-code-bot@users.noreply.github.com'
+          git commit -m 'chore: publish generated Microsoft Sentinel detections'
+          git push origin HEAD:main

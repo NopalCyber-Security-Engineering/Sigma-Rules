@@ -1,0 +1,42 @@
+rules:
+  0f4e1da3-d52e-4ec1-b8eb-a937f57d87a1:
+    enabled: false
+    queryFrequency: PT5M
+    queryPeriod: PT5M
+    triggerOperator: GreaterThan
+    triggerThreshold: 0
+    suppressionDuration: PT5H
+    suppressionEnabled: false
+    eventGrouping: SingleAlert
+    createIncident: true
+    severity: Medium
+    entityMappings:
+      - entityType: IP
+        fieldMappings:
+          - identifier: Address
+            columnName: SourceIP
+      - entityType: Account
+        fieldMappings:
+          - identifier: Name
+            columnName: SourceUserName
+
+  b982f0b1-4980-4618-93fe-eae41d51f713:
+    enabled: false
+    queryFrequency: PT5M
+    queryPeriod: PT5M
+    triggerOperator: GreaterThan
+    triggerThreshold: 0
+    suppressionDuration: PT5H
+    suppressionEnabled: false
+    eventGrouping: SingleAlert
+    createIncident: true
+    severity: Low
+    entityMappings:
+      - entityType: IP
+        fieldMappings:
+          - identifier: Address
+            columnName: SourceIP
+      - entityType: IP
+        fieldMappings:
+          - identifier: Address
+            columnName: DestinationIP

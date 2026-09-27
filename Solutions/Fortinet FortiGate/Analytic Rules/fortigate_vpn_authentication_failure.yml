@@ -1,0 +1,26 @@
+title: FortiGate VPN Authentication Failure
+id: 0f4e1da3-d52e-4ec1-b8eb-a937f57d87a1
+status: test
+description: >-
+  Detects a FortiGate event representing a failed VPN authentication. This is a
+  disposable Detection-as-Code pipeline sample and is not intended to be enabled
+  in production without validating the customer's FortiGate event values and fields.
+author: Detection Engineering Team
+date: 2026-09-28
+tags:
+  - attack.credential_access
+  - attack.t1110
+logsource:
+  product: fortinet
+  service: fortigate
+  category: authentication
+detection:
+  selection:
+    Vendor: Fortinet
+    Product|contains: FortiGate
+    Activity|contains: vpn
+    Outcome: failure
+  condition: selection
+falsepositives:
+  - Legitimate users entering incorrect VPN credentials.
+level: medium
