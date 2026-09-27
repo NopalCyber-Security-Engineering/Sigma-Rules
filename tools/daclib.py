@@ -14,7 +14,7 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOLUTION_ROOT = PROJECT_ROOT / "Solutions"
 PLATFORM_ROOT = PROJECT_ROOT / "platforms" / "microsoft-sentinel"
-PIPELINE_FILE = PLATFORM_ROOT / "pipelines" / "fortigate-commonsecuritylog.yml"
+PIPELINES_ROOT = PLATFORM_ROOT / "pipelines"
 CLIENTS_FILE = PLATFORM_ROOT / "clients.yml"
 SETTINGS_FILE = PLATFORM_ROOT / "rule-settings.yml"
 ARM_API_VERSION = "2025-09-01"
@@ -26,6 +26,11 @@ ALLOWED_LEVELS = {"informational", "low", "medium", "high", "critical"}
 ALLOWED_TRIGGER_OPERATORS = {"GreaterThan", "LessThan", "Equal", "NotEqual"}
 ALLOWED_SEVERITIES = {"Informational", "Low", "Medium", "High"}
 ALLOWED_EVENT_GROUPING = {"AlertPerResult", "SingleAlert"}
+ALLOWED_RULE_OVERRIDE_KEYS = {
+    "enabled", "queryFrequency", "queryPeriod", "triggerOperator", "triggerThreshold",
+    "suppressionDuration", "suppressionEnabled", "eventGrouping", "createIncident",
+    "severity", "entityMappings",
+}
 
 
 @dataclass(frozen=True)
@@ -92,17 +97,58 @@ def validate_sigma_rule(rule: RuleSource) -> list[str]:
     return errors
 
 
+def validate_sentinel_settings(cfg: dict[str, Any], label: str) -> list[str]:
+    errors: list[str] = []
+    if cfg.get("triggerOperator") not in ALLOWED_TRIGGER_OPERATORS:
+        errors.append(f"{label}: invalid triggerOperator")
+    if cfg.get("severity") not in ALLOWED_SEVERITIES:
+        errors.append(f"{label}: invalid severity")
+    if cfg.get("eventGrouping") not in ALLOWED_EVENT_GROUPING:
+        errors.append(f"{label}: invalid eventGrouping")
+    for duration_key in ("queryFrequency", "queryPeriod", "suppressionDuration"):
+        if not re.fullmatch(r"P(?!$).+", str(cfg.get(duration_key, ""))):
+            errors.append(f"{label}: {duration_key} must be ISO 8601 duration")
+    try:
+        int(cfg.get("triggerThreshold"))
+    except (TypeError, ValueError):
+        errors.append(f"{label}: triggerThreshold must be an integer")
+    if not isinstance(cfg.get("entityMappings", []), list):
+        errors.append(f"{label}: entityMappings must be a list")
+    return errors
+
+
+def pipeline_path(profile: str) -> Path:
+    return PIPELINES_ROOT / f"{profile}.yml"
+
+
+def resolve_compiler_profile(client_cfg: dict[str, Any], rule: RuleSource) -> str:
+    profiles = client_cfg.get("compiler_profiles", {})
+    profile = profiles.get(rule.solution) if isinstance(profiles, dict) else None
+    if not profile:
+        raise ValidationError(f"No compiler profile configured for solution {rule.solution!r}")
+    return str(profile)
+
+
+def resolve_rule_settings(defaults: dict[str, Any], client_cfg: dict[str, Any], rule_id: str) -> dict[str, Any]:
+    merged = dict(defaults)
+    overrides = client_cfg.get("rule_overrides", {}) or {}
+    merged.update(overrides.get(rule_id, {}) or {})
+    return merged
+
+
 def validate_project() -> list[RuleSource]:
     rules = discover_rules()
     if not rules:
         raise ValidationError("No Sigma rules found under Solutions/*/Analytic Rules/")
     errors: list[str] = []
     ids: dict[str, Path] = {}
+    rules_by_id: dict[str, RuleSource] = {}
     for rule in rules:
         errors.extend(validate_sigma_rule(rule))
         if rule.id in ids:
             errors.append(f"Duplicate rule id {rule.id}: {ids[rule.id]} and {rule.path}")
         ids[rule.id] = rule.path
+        rules_by_id[rule.id] = rule
 
     settings_doc = load_yaml(SETTINGS_FILE)
     settings = settings_doc.get("rules", {})
@@ -113,20 +159,12 @@ def validate_project() -> list[RuleSource]:
     for rule in rules:
         if rule.id not in settings:
             errors.append(f"{SETTINGS_FILE}: missing Sentinel settings for rule {rule.id}")
+        else:
+            errors.extend(validate_sentinel_settings(settings[rule.id], f"{SETTINGS_FILE}: rule {rule.id}"))
 
-    for rule_id, cfg in settings.items():
+    for rule_id in settings:
         if rule_id not in ids:
             errors.append(f"{SETTINGS_FILE}: settings reference unknown rule {rule_id}")
-            continue
-        if cfg.get("triggerOperator") not in ALLOWED_TRIGGER_OPERATORS:
-            errors.append(f"{SETTINGS_FILE}: invalid triggerOperator for {rule_id}")
-        if cfg.get("severity") not in ALLOWED_SEVERITIES:
-            errors.append(f"{SETTINGS_FILE}: invalid severity for {rule_id}")
-        if cfg.get("eventGrouping") not in ALLOWED_EVENT_GROUPING:
-            errors.append(f"{SETTINGS_FILE}: invalid eventGrouping for {rule_id}")
-        for duration_key in ("queryFrequency", "queryPeriod", "suppressionDuration"):
-            if not re.fullmatch(r"P(?!$).+", str(cfg.get(duration_key, ""))):
-                errors.append(f"{SETTINGS_FILE}: {duration_key} for {rule_id} must be ISO 8601 duration")
 
     clients_doc = load_yaml(CLIENTS_FILE)
     clients = clients_doc.get("clients", {})
@@ -136,14 +174,57 @@ def validate_project() -> list[RuleSource]:
         for client, cfg in clients.items():
             if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", client):
                 errors.append(f"{CLIENTS_FILE}: invalid client alias {client!r}")
-            if cfg.get("compiler_profile") != "fortigate-commonsecuritylog":
-                errors.append(f"{CLIENTS_FILE}: unsupported compiler_profile for {client}")
+            profiles = cfg.get("compiler_profiles", {})
+            if not isinstance(profiles, dict) or not profiles:
+                errors.append(f"{CLIENTS_FILE}: {client} compiler_profiles must be a non-empty mapping")
+                profiles = {}
+            for solution, profile in profiles.items():
+                if not isinstance(solution, str) or not isinstance(profile, str) or not profile:
+                    errors.append(f"{CLIENTS_FILE}: invalid compiler profile mapping for {client}")
+                    continue
+                path = pipeline_path(profile)
+                if not path.exists():
+                    errors.append(f"{CLIENTS_FILE}: {client} references missing compiler profile {profile!r}")
+                else:
+                    try:
+                        pipeline_doc = load_yaml(path)
+                        priority = int(pipeline_doc.get("priority", 999))
+                        if priority > 9:
+                            errors.append(f"{path}: custom pySigma pipeline priority must be <= 9")
+                    except (ValidationError, TypeError, ValueError) as exc:
+                        errors.append(str(exc))
+
             assigned = cfg.get("rules", [])
             if not isinstance(assigned, list) or not assigned:
                 errors.append(f"{CLIENTS_FILE}: {client} must have at least one rule assignment")
+                assigned = []
             for rule_id in assigned:
                 if rule_id not in ids:
                     errors.append(f"{CLIENTS_FILE}: {client} references unknown rule {rule_id}")
+                    continue
+                rule = rules_by_id[rule_id]
+                if rule.solution not in profiles:
+                    errors.append(
+                        f"{CLIENTS_FILE}: {client} has no compiler profile for assigned solution {rule.solution!r}"
+                    )
+
+            overrides = cfg.get("rule_overrides", {}) or {}
+            if not isinstance(overrides, dict):
+                errors.append(f"{CLIENTS_FILE}: {client} rule_overrides must be a mapping")
+                overrides = {}
+            for rule_id, override in overrides.items():
+                if rule_id not in assigned:
+                    errors.append(f"{CLIENTS_FILE}: {client} override references an unassigned rule {rule_id}")
+                    continue
+                if not isinstance(override, dict):
+                    errors.append(f"{CLIENTS_FILE}: {client} override for {rule_id} must be a mapping")
+                    continue
+                unknown = sorted(set(override) - ALLOWED_RULE_OVERRIDE_KEYS)
+                if unknown:
+                    errors.append(f"{CLIENTS_FILE}: {client} override for {rule_id} has unsupported keys: {', '.join(unknown)}")
+                if rule_id in settings:
+                    merged = resolve_rule_settings(settings[rule_id], cfg, rule_id)
+                    errors.extend(validate_sentinel_settings(merged, f"{CLIENTS_FILE}: {client} rule {rule_id}"))
 
     if errors:
         raise ValidationError("\n".join(errors))
@@ -213,11 +294,12 @@ def offline_demo_compile(rule: RuleSource) -> str:
     )
 
 
-def pysigma_compile(rule: RuleSource) -> str:
+def pysigma_compile(rule: RuleSource, profile: str) -> str:
+    profile_path = pipeline_path(profile)
     cmd = [
         "sigma", "convert", "-t", "kusto",
         "-p", "azure_monitor",
-        "-p", str(PIPELINE_FILE),
+        "-p", str(profile_path),
         "-f", "default",
         str(rule.path),
     ]
@@ -229,7 +311,7 @@ def pysigma_compile(rule: RuleSource) -> str:
         ) from exc
     if proc.returncode != 0:
         raise ValidationError(
-            f"pySigma conversion failed for {rule.path}:\n{proc.stderr.strip()}\n{proc.stdout.strip()}"
+            f"pySigma conversion failed for {rule.path} using profile {profile!r}:\n{proc.stderr.strip()}\n{proc.stdout.strip()}"
         )
     query = proc.stdout.strip()
     if not query:
@@ -237,11 +319,13 @@ def pysigma_compile(rule: RuleSource) -> str:
     return query
 
 
-def compile_rule(rule: RuleSource, compiler: str) -> str:
+def compile_rule(rule: RuleSource, compiler: str, profile: str) -> str:
     if compiler == "offline-demo":
+        if profile != "fortigate-commonsecuritylog":
+            raise ValidationError(f"offline-demo only supports compiler profile 'fortigate-commonsecuritylog', got {profile!r}")
         return offline_demo_compile(rule)
     if compiler == "pysigma":
-        return pysigma_compile(rule)
+        return pysigma_compile(rule, profile)
     raise ValidationError(f"Unknown compiler {compiler!r}")
 
 

@@ -15,7 +15,7 @@ For the person creating the Microsoft Sentinel repository connection, verify:
 
 Edit `platforms/microsoft-sentinel/clients.yml` with non-sensitive internal aliases for the actual Sentinel workspaces. Do not put tenant IDs, secrets or credentials in source control.
 
-Only assign a rule to a client after confirming that client actually has the relevant data source.
+Only assign a rule to a client after confirming that client actually has the relevant data source. Set `compiler_profiles` per Solution for that client. Use `rule_overrides` only when a verified customer requirement differs from the shared Sentinel defaults; do not fork the Sigma rule for deployment-only differences.
 
 The publisher creates/updates one `deploy/<client-alias>` branch in `MS-Sentinel` for every configured client.
 
@@ -61,7 +61,7 @@ Content type: Analytics rules
 
 Do **not** connect a customer workspace to `main`, because `main` intentionally contains the generated catalog for all clients.
 
-Sentinel creates its deployment workflow in the selected deployment branch. The source publisher preserves `.github/` and `.sentinel/` on existing deployment branches, so future generated-content publishes don't overwrite Sentinel's workflow or smart-deployment state.
+Sentinel creates its GitHub deployment workflow in the selected deployment branch. The source publisher replaces only `Solutions/` on existing deployment branches, so the Sentinel-created `.github/workflows/...` file and any other branch-level configuration remain untouched.
 
 ## 6. Controlled first live test
 

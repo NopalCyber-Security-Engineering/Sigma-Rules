@@ -37,9 +37,9 @@ Sigma-Rules/
 
 ## Important design boundary
 
-Sigma remains portable. Microsoft Sentinel-only values such as query frequency, query period, incident settings and entity mappings live under `platforms/microsoft-sentinel/`, not inside the Sigma detection logic.
+Sigma remains portable. Microsoft Sentinel-only values such as query frequency, query period, incident settings and entity mappings live under `platforms/microsoft-sentinel/`, not inside the Sigma detection logic. Global per-rule defaults live in `rule-settings.yml`; `clients.yml` can apply narrowly scoped per-client overrides without copying the Sigma rule.
 
-The bundled FortiGate mapping targets `CommonSecurityLog` only as a **verified demo profile**. Do not enable these demo rules in a customer workspace until the customer's actual FortiGate ingestion, values and field mappings have been checked.
+Compiler mappings are also client-aware per Solution. A single client can map `Fortinet FortiGate` to one profile while another maps the same Sigma source to a different table/schema profile. The bundled FortiGate mapping targets `CommonSecurityLog` only as a **verified demo profile**. Do not enable these demo rules in a customer workspace until the customer's actual FortiGate ingestion, values and field mappings have been checked.
 
 ## Local demo (works without Azure)
 
@@ -67,4 +67,4 @@ python tools/verify_output.py ../MS-Sentinel
 - No customer names, tenant IDs, subscriptions, resource groups, workspace names, logs, IPs or secrets are included.
 - The five bundled client aliases are placeholders used only to demonstrate multi-workspace fan-out. Live Sentinel connections use isolated `deploy/<client>` branches, never the shared catalog branch.
 
-See `docs/ARCHITECTURE.md`, `docs/DEMO.md`, and `docs/MONDAY_INTEGRATION.md` before connecting a real workspace.
+See `docs/ARCHITECTURE.md`, `docs/DEMO.md`, `docs/MONDAY_INTEGRATION.md`, and `docs/REFERENCES.md` before connecting a real workspace.

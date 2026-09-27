@@ -1,28 +1,39 @@
 # DEMO PLACEHOLDERS ONLY.
-# Replace these aliases and rule assignments with verified customer facts before live deployment.
+# Replace these aliases, solution compiler profiles, and rule assignments with verified customer facts before live deployment.
+# A client can use different compiler profiles per Solution without copying the Sigma source rule.
 clients:
   demo-client-01:
-    compiler_profile: fortigate-commonsecuritylog
+    compiler_profiles:
+      Fortinet FortiGate: fortigate-commonsecuritylog
     rules:
       - 0f4e1da3-d52e-4ec1-b8eb-a937f57d87a1
       - b982f0b1-4980-4618-93fe-eae41d51f713
+    rule_overrides: {}
   demo-client-02:
-    compiler_profile: fortigate-commonsecuritylog
+    compiler_profiles:
+      Fortinet FortiGate: fortigate-commonsecuritylog
     rules:
       - 0f4e1da3-d52e-4ec1-b8eb-a937f57d87a1
       - b982f0b1-4980-4618-93fe-eae41d51f713
+    rule_overrides: {}
   demo-client-03:
-    compiler_profile: fortigate-commonsecuritylog
+    compiler_profiles:
+      Fortinet FortiGate: fortigate-commonsecuritylog
     rules:
       - 0f4e1da3-d52e-4ec1-b8eb-a937f57d87a1
       - b982f0b1-4980-4618-93fe-eae41d51f713
+    rule_overrides: {}
   demo-client-04:
-    compiler_profile: fortigate-commonsecuritylog
+    compiler_profiles:
+      Fortinet FortiGate: fortigate-commonsecuritylog
     rules:
       - 0f4e1da3-d52e-4ec1-b8eb-a937f57d87a1
       - b982f0b1-4980-4618-93fe-eae41d51f713
+    rule_overrides: {}
   demo-client-05:
-    compiler_profile: fortigate-commonsecuritylog
+    compiler_profiles:
+      Fortinet FortiGate: fortigate-commonsecuritylog
     rules:
       - 0f4e1da3-d52e-4ec1-b8eb-a937f57d87a1
       - b982f0b1-4980-4618-93fe-eae41d51f713
+    rule_overrides: {}

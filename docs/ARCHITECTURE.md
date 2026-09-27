@@ -76,7 +76,9 @@ The `main` catalog still gives the team a single place to inspect all generated 
 
 ## Compiler profile boundary
 
-The current demo profile maps FortiGate-oriented Sigma fields to Microsoft Sentinel `CommonSecurityLog`. This is intentionally a replaceable profile. If a real client uses ASIM or a different/custom table, add or select another processing pipeline and update that client's profile assignment; the source repository structure and publishing model do not change.
+The current demo profile maps FortiGate-oriented Sigma fields to Microsoft Sentinel `CommonSecurityLog`. Compiler profiles are selected **per client and per Solution** in `clients.yml`, and compilation is cached by `(rule, profile)`. That means the same portable Sigma rule can compile differently for two clients without copying the rule. If a real client uses ASIM or a different/custom table, add another processing pipeline and change only that client/Solution profile assignment; the source repository structure and publishing model do not change.
+
+`rule-settings.yml` holds the shared Sentinel defaults for each rule. `clients.yml` also supports optional `rule_overrides` for genuine client-specific scheduling/severity/entity differences. This keeps customer variance in configuration rather than forking detection logic.
 
 ## Deployment format
 

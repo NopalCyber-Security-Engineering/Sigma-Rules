@@ -34,7 +34,9 @@ jobs:
           cache-dependency-path: requirements-ci.txt
 
       - name: Install pinned compiler toolchain
-        run: python -m pip install -r requirements-ci.txt
+        run: |
+          python -m pip install -r requirements-ci.txt
+          python -m pip check
 
       - name: Validate project
         run: python tools/validate.py
@@ -56,11 +58,12 @@ jobs:
           from pathlib import Path
           manifest = json.loads(Path('build/ms-sentinel/_build/build-manifest.json').read_text())
           rules = sum(len(v['rules']) for v in manifest['clients'].values())
+          sources = {r['source'] for v in manifest['clients'].values() for r in v['rules']}
           clients = len(manifest['clients'])
           out = Path(os.environ['GITHUB_STEP_SUMMARY'])
           out.write_text(
               '# Detection-as-Code build\n\n'
-              f'- Source rules: **2**\n'
+              f'- Source rules: **{len(sources)}**\n'
               f'- Client roots: **{clients}**\n'
               f'- Generated Sentinel ARM templates: **{rules}**\n'
               f'- Compiler: **pySigma / Kusto backend**\n'
@@ -132,8 +135,8 @@ jobs:
               git rm -rf . >/dev/null 2>&1 || true
             fi
 
-            # Only generated deployment content is replaced. Any Sentinel-created
-            # .github workflow and .sentinel smart-deployment state are preserved.
+            # Only generated deployment content is replaced. Everything outside
+            # Solutions/ is preserved, including Sentinel-created GitHub workflows.
             rm -rf Solutions
             cp -a "$src/Solutions" ./Solutions
             git add -A Solutions
