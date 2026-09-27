@@ -12,7 +12,7 @@ python tools\verify_output.py ..\MS-Sentinel
 python -m unittest discover -s tests -v
 ```
 
-4. Open `../MS-Sentinel/Clients/` and show five independently deployable client roots.
+4. Open `../MS-Sentinel/Clients/` on `main` and show the five-client generated catalog, then show the five local `deploy/demo-client-*` branches that provide isolated deployment boundaries.
 5. Open one generated JSON rule and point out:
    - the compiled KQL;
    - Scheduled analytics rule settings;
@@ -21,7 +21,7 @@ python -m unittest discover -s tests -v
    - `enabled: false` safety default;
    - workspace parameter instead of a hard-coded tenant/workspace.
 6. Open `_build/build-manifest.json` and show source/artifact hashes and source-to-output traceability.
-7. Explain the only missing live step: connect each real workspace to its client root using Microsoft Sentinel Repositories once the appropriate Azure/GitHub permissions and real log schema are available.
+7. Explain the remaining live step: after replacing the demo aliases and verifying real schemas, connect each real workspace to only its own `deploy/<client>` branch using Microsoft Sentinel Repositories.
 
 ## What not to claim
 

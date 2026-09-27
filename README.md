@@ -65,6 +65,6 @@ python tools/verify_output.py ../MS-Sentinel
 - Cross-repository publishing is disabled unless repository variable `PUBLISH_ENABLED=true` is set.
 - No Azure credentials are stored here.
 - No customer names, tenant IDs, subscriptions, resource groups, workspace names, logs, IPs or secrets are included.
-- The five bundled client roots are placeholders used only to demonstrate multi-workspace fan-out.
+- The five bundled client aliases are placeholders used only to demonstrate multi-workspace fan-out. Live Sentinel connections use isolated `deploy/<client>` branches, never the shared catalog branch.
 
 See `docs/ARCHITECTURE.md`, `docs/DEMO.md`, and `docs/MONDAY_INTEGRATION.md` before connecting a real workspace.

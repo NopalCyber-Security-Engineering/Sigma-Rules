@@ -85,8 +85,9 @@ jobs:
           repository: ${{ vars.MS_SENTINEL_REPOSITORY }}
           token: ${{ secrets.MS_SENTINEL_REPO_TOKEN }}
           path: target-ms-sentinel
+          fetch-depth: 0
 
-      - name: Publish generated client roots
+      - name: Publish generated catalog to target main
         if: ${{ vars.PUBLISH_ENABLED == 'true' }}
         shell: bash
         run: |
@@ -97,12 +98,52 @@ jobs:
           rsync -a --delete build/ms-sentinel/Clients/ target-ms-sentinel/Clients/
           cp build/ms-sentinel/_build/build-manifest.json target-ms-sentinel/_build/build-manifest.json
           cd target-ms-sentinel
-          git add Clients _build/build-manifest.json
-          if git diff --cached --quiet; then
-            echo 'No generated changes to publish.'
-            exit 0
-          fi
           git config user.name 'detection-as-code-bot'
           git config user.email 'detection-as-code-bot@users.noreply.github.com'
-          git commit -m 'chore: publish generated Microsoft Sentinel detections'
-          git push origin HEAD:main
+          git add Clients _build/build-manifest.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: publish generated Microsoft Sentinel catalog'
+            git push origin HEAD:main
+          else
+            echo 'No catalog changes to publish.'
+          fi
+
+      - name: Publish isolated client deployment branches
+        if: ${{ vars.PUBLISH_ENABLED == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          src_root="$GITHUB_WORKSPACE/build/ms-sentinel/Clients"
+          cd target-ms-sentinel
+          git config user.name 'detection-as-code-bot'
+          git config user.email 'detection-as-code-bot@users.noreply.github.com'
+          git fetch origin --prune
+
+          for src in "$src_root"/*; do
+            test -d "$src"
+            client="$(basename "$src")"
+            branch="deploy/$client"
+            echo "Publishing $client -> $branch"
+
+            if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+              git switch --force-create "$branch" "origin/$branch"
+            else
+              git switch --orphan "$branch"
+              git rm -rf . >/dev/null 2>&1 || true
+            fi
+
+            # Only generated deployment content is replaced. Any Sentinel-created
+            # .github workflow and .sentinel smart-deployment state are preserved.
+            rm -rf Solutions
+            cp -a "$src/Solutions" ./Solutions
+            git add -A Solutions
+
+            if ! git diff --cached --quiet; then
+              git commit -m "chore: publish generated Sentinel content for $client"
+              git push origin "HEAD:$branch"
+            else
+              echo "No deployment changes for $client."
+            fi
+          done
+
+          git switch main

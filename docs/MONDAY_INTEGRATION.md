@@ -9,13 +9,15 @@ For the person creating the Microsoft Sentinel repository connection, verify:
 - Owner role on the resource group containing the Sentinel workspace;
 - collaborator access to the target GitHub repository;
 - GitHub Actions are enabled;
-- the Azure identity creating the connection is supported for Sentinel repository connections (Microsoft documents a home-tenant account requirement; external/B2B identities need special attention in an MSSP model).
+- the Azure identity creating the connection is in the workspace's home tenant. Microsoft documents that external/B2B guest identities and delegated access aren't supported for creating the connection.
 
 ## 2. Replace demo client aliases
 
-Edit `platforms/microsoft-sentinel/clients.yml` with non-sensitive internal aliases for the actual five Sentinel workspaces. Do not put tenant IDs, secrets or credentials in source control.
+Edit `platforms/microsoft-sentinel/clients.yml` with non-sensitive internal aliases for the actual Sentinel workspaces. Do not put tenant IDs, secrets or credentials in source control.
 
 Only assign a rule to a client after confirming that client actually has the relevant data source.
+
+The publisher creates/updates one `deploy/<client-alias>` branch in `MS-Sentinel` for every configured client.
 
 ## 3. Verify FortiGate data before enabling these examples
 
@@ -31,25 +33,7 @@ For every client receiving a FortiGate rule, confirm:
 
 If the client's mapping differs, create/select another processing pipeline. Do not rewrite the Sigma repository layout.
 
-## 4. Create repository connections
-
-Connect the same `MS-Sentinel` GitHub repository to the appropriate real workspaces. After Microsoft generates each repository deployment workflow, scope that workflow to only its matching client root.
-
-For example, client `acme-prod` should watch:
-
-```text
-Clients/acme-prod/**
-```
-
-and its deployment job's content directory should point to:
-
-```text
-${{ github.workspace }}/Clients/acme-prod
-```
-
-Repeat once per workspace connection.
-
-## 5. Cross-repository publish
+## 4. Enable cross-repository publishing
 
 In `Sigma-Rules`, create:
 
@@ -59,14 +43,35 @@ In `Sigma-Rules`, create:
 
 A fine-grained PAT is the quickest proof-of-concept. A GitHub App is preferable later if your organization wants centrally managed short-lived credentials.
 
+After a successful run, verify that `MS-Sentinel` contains:
+
+- the full generated catalog on `main`;
+- exactly one `deploy/<client-alias>` branch per configured client;
+- only that client's `Solutions/...` content on each deployment branch.
+
+## 5. Create repository connections — connect deployment branches, not main
+
+For each real workspace, create the Microsoft Sentinel repository connection to:
+
+```text
+Repository: MS-Sentinel
+Branch: deploy/<that-client-alias>
+Content type: Analytics rules
+```
+
+Do **not** connect a customer workspace to `main`, because `main` intentionally contains the generated catalog for all clients.
+
+Sentinel creates its deployment workflow in the selected deployment branch. The source publisher preserves `.github/` and `.sentinel/` on existing deployment branches, so future generated-content publishes don't overwrite Sentinel's workflow or smart-deployment state.
+
 ## 6. Controlled first live test
 
-Keep generated rules disabled. Push one known test change for one verified client root, observe:
+Keep generated rules disabled. Push one known test change for one verified client and observe:
 
-1. Sigma build succeeds;
-2. target repository receives exactly the expected generated change;
-3. the correct client-scoped Sentinel workflow runs;
-4. the ARM deployment succeeds;
-5. the analytics rule appears in the intended workspace, still disabled;
-6. manually validate its KQL against real data;
-7. only then decide whether to enable the rule.
+1. Sigma build succeeds with the real pySigma compiler;
+2. `MS-Sentinel/main` catalog receives the expected change;
+3. only the intended `deploy/<client>` branch receives that deployment change;
+4. the correct Sentinel-generated workflow runs;
+5. the ARM deployment succeeds;
+6. the analytics rule appears in the intended workspace, still disabled;
+7. manually validate its KQL against real data;
+8. only then decide whether to enable the rule.
