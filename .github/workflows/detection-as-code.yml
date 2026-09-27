@@ -146,4 +146,13 @@ jobs:
             fi
           done
 
+          # Never auto-delete a deployment branch: it may still be connected to a
+          # live workspace. Surface stale branches for deliberate retirement instead.
+          while read -r ref; do
+            client="${ref#origin/deploy/}"
+            if [ ! -d "$src_root/$client" ]; then
+              echo "::warning::Stale deployment branch $ref is not present in clients.yml. Disconnect/retire it deliberately before deleting the branch."
+            fi
+          done < <(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/deploy/*')
+
           git switch main

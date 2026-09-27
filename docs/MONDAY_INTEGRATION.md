@@ -75,3 +75,14 @@ Keep generated rules disabled. Push one known test change for one verified clien
 6. the analytics rule appears in the intended workspace, still disabled;
 7. manually validate its KQL against real data;
 8. only then decide whether to enable the rule.
+
+## 7. Client retirement / removal
+
+Removing a client from `clients.yml` does **not** automatically delete its `deploy/<client>` branch. This is intentional: that branch may still be connected to a live workspace. The publisher emits a warning for stale deployment branches.
+
+Retire in this order:
+
+1. disable/retire the relevant deployed content as required;
+2. remove the Microsoft Sentinel repository connection for that workspace;
+3. remove the client from `clients.yml`;
+4. delete the stale `deploy/<client>` branch after confirming it is no longer connected.
