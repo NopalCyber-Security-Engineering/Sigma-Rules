@@ -8,6 +8,7 @@ from daclib import (
     compile_rule, load_yaml, normalized_json, resolve_compiler_profile,
     resolve_rule_settings, sha256_text, validate_arm_document, validate_project,
 )
+from daclog import error, info
 
 
 def main() -> int:
@@ -32,7 +33,7 @@ def main() -> int:
         clients_out.mkdir(parents=True, exist_ok=True)
         build_out.mkdir(parents=True, exist_ok=True)
 
-        print(f"[validate] {len(rules)} Sigma rules passed project validation")
+        info("build", "source validation passed", rules=len(rules), compiler=args.compiler)
 
         # Compile once per rule/profile pair. Different clients can map the same
         # portable Sigma rule to different Sentinel schemas without copying it.
@@ -52,14 +53,15 @@ def main() -> int:
                 profile = resolve_compiler_profile(client_cfg, rule)
                 cache_key = (rule.id, profile)
                 if cache_key not in compiled:
+                    info("compile", "compiling rule", rule=rule.id, profile=profile, compiler=args.compiler)
                     compiled[cache_key] = compile_rule(rule, args.compiler, profile)
-                    print(f"[compile:{args.compiler}] {rule.id}  profile={profile}  {rule.data['title']}")
+                    info("compile", "rule compiled", rule=rule.id, profile=profile, compiler=args.compiler)
 
                 effective_settings = resolve_rule_settings(settings[rule_id], client_cfg, rule_id)
                 arm = arm_template(rule, compiled[cache_key], effective_settings)
                 errors = validate_arm_document(arm)
                 if errors:
-                    raise ValidationError("\n".join(errors))
+                    raise ValidationError(f"client={client} rule={rule.id}: " + "; ".join(errors))
 
                 rel = Path("Clients") / client / "Solutions" / rule.solution / "Analytic Rules" / f"{rule.slug}.json"
                 dest = out / rel
@@ -78,15 +80,13 @@ def main() -> int:
                 })
                 generated_count += 1
             manifest["clients"][client] = {"rules": client_items}
+            info("render", "client artifacts generated", client=client, rules=len(client_items))
 
         (build_out / "build-manifest.json").write_text(normalized_json(manifest), encoding="utf-8")
-        print(f"[wrap/render] {generated_count} ARM rule template(s) generated across {len(clients)} client root(s)")
-        print(f"[manifest] {build_out / 'build-manifest.json'}")
-        print("BUILD PASSED")
+        info("build", "build passed", templates=generated_count, clients=len(clients), manifest=build_out / "build-manifest.json")
         return 0
     except ValidationError as exc:
-        print("BUILD FAILED")
-        print(exc)
+        error("build", str(exc))
         return 1
 
 

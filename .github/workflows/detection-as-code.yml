@@ -1,30 +1,36 @@
-name: Detection as Code - Microsoft Sentinel
+name: Detection as Code
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
-    paths:
-      - 'Solutions/**'
-      - 'platforms/microsoft-sentinel/**'
-      - 'tools/**'
-      - 'tests/**'
-      - 'requirements-ci.txt'
-      - '.github/workflows/detection-as-code.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: sentinel-dac-${{ github.ref }}
+  group: detection-as-code-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  validate-build:
+  quality-gate:
+    name: quality-gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
     steps:
       - name: Checkout Sigma source
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Log workflow context
+        shell: bash
+        run: |
+          echo "DAC | INFO | stage=ci | event=${{ github.event_name }} | ref=${{ github.ref }} | sha=${{ github.sha }} | workflow started"
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -33,24 +39,37 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-ci.txt
 
-      - name: Install pinned compiler toolchain
+      - name: Install pinned detection toolchain
+        shell: bash
         run: |
-          python -m pip install -r requirements-ci.txt
+          set -euo pipefail
+          echo "DAC | INFO | stage=dependencies | installing pinned Python dependencies"
+          python -m pip install --disable-pip-version-check -r requirements-ci.txt
           python -m pip check
+          python - <<'PY'
+          from importlib.metadata import version
+          for package in ('pysigma', 'sigma-cli', 'pysigma-backend-kusto', 'PyYAML', 'jsonschema'):
+              print(f"DAC | INFO | stage=dependencies | package={package} | version={version(package)} | dependency ready")
+          PY
 
-      - name: Validate project
+      - name: Validate Sigma source and platform configuration
         run: python tools/validate.py
 
-      - name: Compile, wrap, and render Sentinel ARM
+      - name: Compile Sigma and render Microsoft Sentinel content
         run: python tools/build.py --compiler pysigma --output build/ms-sentinel
 
-      - name: Verify generated content
+      - name: Verify generated Sentinel content
         run: python tools/verify_output.py build/ms-sentinel
 
       - name: Run unit tests
-        run: python -m unittest discover -s tests -v
+        shell: bash
+        run: |
+          echo "DAC | INFO | stage=test | starting unit tests"
+          python -m unittest discover -s tests -v
+          echo "DAC | INFO | stage=test | unit tests passed"
 
       - name: Write pipeline summary
+        if: success()
         shell: bash
         run: |
           python - <<'PY'
@@ -60,29 +79,49 @@ jobs:
           rules = sum(len(v['rules']) for v in manifest['clients'].values())
           sources = {r['source'] for v in manifest['clients'].values() for r in v['rules']}
           clients = len(manifest['clients'])
+          publish = os.getenv('PUBLISH_ENABLED') == 'true'
+          event = os.getenv('EVENT_NAME')
           out = Path(os.environ['GITHUB_STEP_SUMMARY'])
           out.write_text(
-              '# Detection-as-Code build\n\n'
-              f'- Source rules: **{len(sources)}**\n'
-              f'- Client roots: **{clients}**\n'
-              f'- Generated Sentinel ARM templates: **{rules}**\n'
+              '# Detection-as-Code quality gate\n\n'
+              f'- Event: **{event}**\n'
+              f'- Source Sigma rules: **{len(sources)}**\n'
+              f'- Client targets: **{clients}**\n'
+              f'- Generated Sentinel templates: **{rules}**\n'
               f'- Compiler: **pySigma / Kusto backend**\n'
-              f'- Generated rule state: **disabled**\n'
-              f'- Cross-repo publish: **{"enabled" if os.getenv("PUBLISH_ENABLED") == "true" else "disabled"}**\n'
+              f'- Quality gate: **PASSED**\n'
+              f'- Publish on this run: **{"yes" if event == "push" and publish else "no"}**\n'
           )
           PY
         env:
+          EVENT_NAME: ${{ github.event_name }}
           PUBLISH_ENABLED: ${{ vars.PUBLISH_ENABLED }}
 
-      - name: Upload generated Sentinel content
+      - name: Upload tested Sentinel build
+        if: success()
         uses: actions/upload-artifact@v7
         with:
-          name: ms-sentinel-generated
+          name: ms-sentinel-${{ github.sha }}
           path: build/ms-sentinel/
           if-no-files-found: error
+          retention-days: 7
+
+      # CD starts only after a merge/push to main. Pull-request runs never receive
+      # or use the target-repository credential.
+      - name: Validate publish configuration
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PUBLISH_ENABLED == 'true' }}
+        shell: bash
+        env:
+          TARGET_REPOSITORY: ${{ vars.MS_SENTINEL_REPOSITORY }}
+          TARGET_TOKEN: ${{ secrets.MS_SENTINEL_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "$TARGET_REPOSITORY" ]] || { echo "::error title=Detection-as-Code publish::MS_SENTINEL_REPOSITORY is not configured"; exit 1; }
+          [[ -n "$TARGET_TOKEN" ]] || { echo "::error title=Detection-as-Code publish::MS_SENTINEL_REPO_TOKEN is not configured"; exit 1; }
+          echo "DAC | INFO | stage=publish | repository=$TARGET_REPOSITORY | publish configuration valid"
 
       - name: Checkout MS-Sentinel target repository
-        if: ${{ vars.PUBLISH_ENABLED == 'true' }}
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PUBLISH_ENABLED == 'true' }}
         uses: actions/checkout@v7
         with:
           repository: ${{ vars.MS_SENTINEL_REPOSITORY }}
@@ -90,72 +129,13 @@ jobs:
           path: target-ms-sentinel
           fetch-depth: 0
 
-      - name: Publish generated catalog to target main
-        if: ${{ vars.PUBLISH_ENABLED == 'true' }}
+      - name: Publish tested Sentinel content
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PUBLISH_ENABLED == 'true' }}
+        shell: bash
+        run: ./scripts/publish_ms_sentinel.sh build/ms-sentinel target-ms-sentinel "${{ github.sha }}"
+
+      - name: Log completion
+        if: always()
         shell: bash
         run: |
-          set -euo pipefail
-          test -n "${{ vars.MS_SENTINEL_REPOSITORY }}"
-          test -n "${{ secrets.MS_SENTINEL_REPO_TOKEN }}"
-          mkdir -p target-ms-sentinel/Clients target-ms-sentinel/_build
-          rsync -a --delete build/ms-sentinel/Clients/ target-ms-sentinel/Clients/
-          cp build/ms-sentinel/_build/build-manifest.json target-ms-sentinel/_build/build-manifest.json
-          cd target-ms-sentinel
-          git config user.name 'detection-as-code-bot'
-          git config user.email 'detection-as-code-bot@users.noreply.github.com'
-          git add Clients _build/build-manifest.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'chore: publish generated Microsoft Sentinel catalog'
-            git push origin HEAD:main
-          else
-            echo 'No catalog changes to publish.'
-          fi
-
-      - name: Publish isolated client deployment branches
-        if: ${{ vars.PUBLISH_ENABLED == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          src_root="$GITHUB_WORKSPACE/build/ms-sentinel/Clients"
-          cd target-ms-sentinel
-          git config user.name 'detection-as-code-bot'
-          git config user.email 'detection-as-code-bot@users.noreply.github.com'
-          git fetch origin --prune
-
-          for src in "$src_root"/*; do
-            test -d "$src"
-            client="$(basename "$src")"
-            branch="deploy/$client"
-            echo "Publishing $client -> $branch"
-
-            if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
-              git switch --force-create "$branch" "origin/$branch"
-            else
-              git switch --orphan "$branch"
-              git rm -rf . >/dev/null 2>&1 || true
-            fi
-
-            # Only generated deployment content is replaced. Everything outside
-            # Solutions/ is preserved, including Sentinel-created GitHub workflows.
-            rm -rf Solutions
-            cp -a "$src/Solutions" ./Solutions
-            git add -A Solutions
-
-            if ! git diff --cached --quiet; then
-              git commit -m "chore: publish generated Sentinel content for $client"
-              git push origin "HEAD:$branch"
-            else
-              echo "No deployment changes for $client."
-            fi
-          done
-
-          # Never auto-delete a deployment branch: it may still be connected to a
-          # live workspace. Surface stale branches for deliberate retirement instead.
-          while read -r ref; do
-            client="${ref#origin/deploy/}"
-            if [ ! -d "$src_root/$client" ]; then
-              echo "::warning::Stale deployment branch $ref is not present in clients.yml. Disconnect/retire it deliberately before deleting the branch."
-            fi
-          done < <(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/deploy/*')
-
-          git switch main
+          echo "DAC | INFO | stage=ci | event=${{ github.event_name }} | ref=${{ github.ref }} | sha=${{ github.sha }} | job_status=${{ job.status }} | workflow finished"
