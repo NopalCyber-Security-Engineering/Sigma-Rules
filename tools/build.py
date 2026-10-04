@@ -67,7 +67,7 @@ def main() -> int:
                 dest = out / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 rendered = normalized_json(arm)
-                dest.write_text(rendered, encoding="utf-8")
+                dest.write_text(rendered, encoding="utf-8", newline="\n")
                 source_text = rule.path.read_text(encoding="utf-8")
                 client_items.append({
                     "ruleId": rule.id,
@@ -82,7 +82,7 @@ def main() -> int:
             manifest["clients"][client] = {"rules": client_items}
             info("render", "client artifacts generated", client=client, rules=len(client_items))
 
-        (build_out / "build-manifest.json").write_text(normalized_json(manifest), encoding="utf-8")
+        (build_out / "build-manifest.json").write_text(normalized_json(manifest), encoding="utf-8", newline="\n",)
         info("build", "build passed", templates=generated_count, clients=len(clients), manifest=build_out / "build-manifest.json")
         return 0
     except ValidationError as exc:
