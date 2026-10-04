@@ -2,7 +2,7 @@ title: FortiGate VPN Authentication Failure
 id: 0f4e1da3-d52e-4ec1-b8eb-a937f57d87a1
 status: test
 description: >-
-  Detects a FortiGate event representing a failed VPN authentication. This is a
+  Detects a FortiGate event representing a failed VPN authentication. TEST TEXT. This is a
   disposable Detection-as-Code pipeline sample and is not intended to be enabled
   in production without validating the customer's FortiGate event values and fields.
 author: Detection Engineering Team
