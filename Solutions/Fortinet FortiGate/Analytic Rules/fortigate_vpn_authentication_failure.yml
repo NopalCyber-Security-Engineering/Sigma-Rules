@@ -4,7 +4,7 @@ status: test
 description: >-
   Detects a FortiGate event representing a failed VPN authentication. TEST TEXT. This is a
   disposable Detection-as-Code pipeline sample and is not intended to be enabled
-  in production without validating the customer's FortiGate event values and fields.
+  in production without validating the customer's FortiGate event values and fields.Office GitHub App publishing verification.
 author: Detection Engineering Team
 date: 2026-09-28
 tags:
