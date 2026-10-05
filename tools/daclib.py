@@ -20,7 +20,7 @@ SETTINGS_FILE = PLATFORM_ROOT / "rule-settings.yml"
 ARM_API_VERSION = "2025-09-01"
 
 REQUIRED_SIGMA_KEYS = {
-    "title", "id", "status", "description", "logsource", "detection", "level"
+    "title", "id", "logsource", "detection"
 }
 ALLOWED_LEVELS = {"informational", "low", "medium", "high", "critical"}
 ALLOWED_TRIGGER_OPERATORS = {"GreaterThan", "LessThan", "Equal", "NotEqual"}
@@ -53,7 +53,10 @@ class ValidationError(Exception):
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValidationError(f"{path}: cannot read YAML: {exc}") from exc
     if not isinstance(data, dict):
         raise ValidationError(f"{path}: expected a YAML mapping at document root")
     return data
@@ -61,7 +64,8 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 def discover_rules() -> list[RuleSource]:
     rules: list[RuleSource] = []
-    for path in sorted(SOLUTION_ROOT.glob("*/Analytic Rules/*.yml")):
+    paths = set(SOLUTION_ROOT.glob("*/Analytic Rules/*.yml")) | set(SOLUTION_ROOT.glob("*/Analytic Rules/*.yaml"))
+    for path in sorted(paths):
         solution = path.parents[1].name
         rules.append(RuleSource(path=path, solution=solution, data=load_yaml(path)))
     return rules
@@ -86,10 +90,14 @@ def validate_sigma_rule(rule: RuleSource) -> list[str]:
         validate_uuid(str(rule.data["id"]), str(rule.path))
     except ValidationError as exc:
         errors.append(str(exc))
-    if str(rule.data.get("level", "")).lower() not in ALLOWED_LEVELS:
+    if "level" in rule.data and str(rule.data["level"]).lower() not in ALLOWED_LEVELS:
         errors.append(f"{rule.path}: unsupported level {rule.data.get('level')!r}")
+    if not isinstance(rule.data["title"], str) or not rule.data["title"].strip():
+        errors.append(f"{rule.path}: title must be a non-empty string")
+    if not isinstance(rule.data["logsource"], dict) or not rule.data["logsource"]:
+        errors.append(f"{rule.path}: logsource must be a non-empty mapping")
     detection = rule.data.get("detection")
-    if not isinstance(detection, dict) or "condition" not in detection:
+    if not isinstance(detection, dict) or not isinstance(detection.get("condition"), str) or not detection["condition"].strip():
         errors.append(f"{rule.path}: detection.condition is required")
     tags = rule.data.get("tags", [])
     if tags is not None and not isinstance(tags, list):
@@ -99,6 +107,15 @@ def validate_sigma_rule(rule: RuleSource) -> list[str]:
 
 def validate_sentinel_settings(cfg: dict[str, Any], label: str) -> list[str]:
     errors: list[str] = []
+    if not isinstance(cfg, dict):
+        return [f"{label}: required Sentinel settings missing"]
+    required = {"queryFrequency", "queryPeriod", "triggerOperator", "triggerThreshold", "suppressionDuration", "suppressionEnabled", "eventGrouping", "createIncident", "severity"}
+    missing = sorted(required - set(cfg))
+    if missing:
+        errors.append(f"{label}: required Sentinel settings missing: {', '.join(missing)}")
+    for key in ("enabled", "suppressionEnabled", "createIncident"):
+        if key in cfg and not isinstance(cfg[key], bool):
+            errors.append(f"{label}: {key} must be a boolean")
     if cfg.get("triggerOperator") not in ALLOWED_TRIGGER_OPERATORS:
         errors.append(f"{label}: invalid triggerOperator")
     if cfg.get("severity") not in ALLOWED_SEVERITIES:
@@ -145,88 +162,64 @@ def validate_project() -> list[RuleSource]:
     rules_by_id: dict[str, RuleSource] = {}
     for rule in rules:
         errors.extend(validate_sigma_rule(rule))
+        if "id" not in rule.data:
+            continue
         if rule.id in ids:
             errors.append(f"Duplicate rule id {rule.id}: {ids[rule.id]} and {rule.path}")
         ids[rule.id] = rule.path
         rules_by_id[rule.id] = rule
 
-    settings_doc = load_yaml(SETTINGS_FILE)
-    settings = settings_doc.get("rules", {})
-    if not isinstance(settings, dict):
-        errors.append(f"{SETTINGS_FILE}: rules must be a mapping")
-        settings = {}
-
+    if errors:
+        raise ValidationError("\n".join(errors))
+    from daclog import info
     for rule in rules:
-        if rule.id not in settings:
-            errors.append(f"{SETTINGS_FILE}: missing Sentinel settings for rule {rule.id}")
+        info("validate", "Sigma rule valid", rule=rule.id)
+    from targets import resolve_targets
+    targets = resolve_targets(rules)
+    sentinel_targets = [t for t in targets if t.platform == "microsoft-sentinel"]
+    settings = load_yaml(SETTINGS_FILE).get("rules", {}) if sentinel_targets and SETTINGS_FILE.exists() else {}
+    if not isinstance(settings, dict):
+        raise ValidationError(f"{SETTINGS_FILE}: rules must be a mapping")
+    if sentinel_targets:
+        for rid in settings:
+            if rid not in ids:
+                errors.append(f"stage=sentinel-config platform=microsoft-sentinel rule={rid}: settings reference unknown rule")
+    for target in sentinel_targets:
+        label = f"stage=sentinel-config platform=microsoft-sentinel client={target.client} rule={target.rule_id}"
+        rule = rules_by_id[target.rule_id]
+        cfg = target.config
+        defaults = settings.get(rule.id)
+        if not isinstance(defaults, dict):
+            errors.append(f"{label}: required Sentinel settings missing")
         else:
-            errors.extend(validate_sentinel_settings(settings[rule.id], f"{SETTINGS_FILE}: rule {rule.id}"))
-
-    for rule_id in settings:
-        if rule_id not in ids:
-            errors.append(f"{SETTINGS_FILE}: settings reference unknown rule {rule_id}")
-
-    clients_doc = load_yaml(CLIENTS_FILE)
-    clients = clients_doc.get("clients", {})
-    if not isinstance(clients, dict) or not clients:
-        errors.append(f"{CLIENTS_FILE}: clients must be a non-empty mapping")
-    else:
-        for client, cfg in clients.items():
-            if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", client):
-                errors.append(f"{CLIENTS_FILE}: invalid client alias {client!r}")
-            profiles = cfg.get("compiler_profiles", {})
-            if not isinstance(profiles, dict) or not profiles:
-                errors.append(f"{CLIENTS_FILE}: {client} compiler_profiles must be a non-empty mapping")
-                profiles = {}
-            for solution, profile in profiles.items():
-                if not isinstance(solution, str) or not isinstance(profile, str) or not profile:
-                    errors.append(f"{CLIENTS_FILE}: invalid compiler profile mapping for {client}")
-                    continue
-                path = pipeline_path(profile)
-                if not path.exists():
-                    errors.append(f"{CLIENTS_FILE}: {client} references missing compiler profile {profile!r}")
-                else:
-                    try:
-                        pipeline_doc = load_yaml(path)
-                        priority = int(pipeline_doc.get("priority", 999))
-                        if priority > 9:
-                            errors.append(f"{path}: custom pySigma pipeline priority must be <= 9")
-                    except (ValidationError, TypeError, ValueError) as exc:
-                        errors.append(str(exc))
-
-            assigned = cfg.get("rules", [])
-            if not isinstance(assigned, list) or not assigned:
-                errors.append(f"{CLIENTS_FILE}: {client} must have at least one rule assignment")
-                assigned = []
-            for rule_id in assigned:
-                if rule_id not in ids:
-                    errors.append(f"{CLIENTS_FILE}: {client} references unknown rule {rule_id}")
-                    continue
-                rule = rules_by_id[rule_id]
-                if rule.solution not in profiles:
-                    errors.append(
-                        f"{CLIENTS_FILE}: {client} has no compiler profile for assigned solution {rule.solution!r}"
-                    )
-
             overrides = cfg.get("rule_overrides", {}) or {}
             if not isinstance(overrides, dict):
-                errors.append(f"{CLIENTS_FILE}: {client} rule_overrides must be a mapping")
-                overrides = {}
-            for rule_id, override in overrides.items():
-                if rule_id not in assigned:
-                    errors.append(f"{CLIENTS_FILE}: {client} override references an unassigned rule {rule_id}")
-                    continue
-                if not isinstance(override, dict):
-                    errors.append(f"{CLIENTS_FILE}: {client} override for {rule_id} must be a mapping")
-                    continue
-                unknown = sorted(set(override) - ALLOWED_RULE_OVERRIDE_KEYS)
-                if unknown:
-                    errors.append(f"{CLIENTS_FILE}: {client} override for {rule_id} has unsupported keys: {', '.join(unknown)}")
-                if rule_id in settings:
-                    merged = resolve_rule_settings(settings[rule_id], cfg, rule_id)
-                    errors.extend(validate_sentinel_settings(merged, f"{CLIENTS_FILE}: {client} rule {rule_id}"))
+                errors.append(f"{label}: rule_overrides must be a mapping")
+                continue
+            for rid, override in overrides.items():
+                if rid not in cfg["rules"] or not isinstance(override, dict):
+                    errors.append(f"{label}: invalid override for {rid}")
+                elif set(override) - ALLOWED_RULE_OVERRIDE_KEYS:
+                    errors.append(f"{label}: unsupported override keys for {rid}")
+            if any(not isinstance(v, dict) for v in overrides.values()):
+                continue
+            errors.extend(validate_sentinel_settings(resolve_rule_settings(defaults, cfg, rule.id), label))
+        try:
+            profile = resolve_compiler_profile(cfg, rule)
+            path = pipeline_path(profile)
+            if not re.fullmatch(r"[a-zA-Z0-9_-]+", profile) or not path.exists():
+                raise ValidationError(f"missing or invalid compiler profile {profile!r}")
+            if int(load_yaml(path).get("priority", 999)) > 9:
+                raise ValidationError("custom pySigma pipeline priority must be <= 9")
+        except (ValidationError, TypeError, ValueError) as exc:
+            errors.append(f"{label}: {exc}")
 
     if errors:
+        from daclog import error
+        for message in errors:
+            context, _, reason = message.partition(": ")
+            fields = dict(part.split("=", 1) for part in context.split() if "=" in part)
+            error(fields.pop("stage", "validate"), reason, **fields)
         raise ValidationError("\n".join(errors))
     return rules
 
@@ -364,7 +357,7 @@ def arm_template(rule: RuleSource, kql: str, settings: dict[str, Any]) -> dict[s
     rid = rule.id
     props = {
         "displayName": rule.data["title"],
-        "description": rule.data["description"].strip(),
+        "description": str(rule.data.get("description", "")).strip(),
         "severity": settings["severity"],
         "enabled": bool(settings.get("enabled", False)),
         "query": kql,

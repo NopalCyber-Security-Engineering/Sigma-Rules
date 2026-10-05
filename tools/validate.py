@@ -13,13 +13,6 @@ def main() -> int:
         return 1
 
     info("validate", "project validation passed", rules=len(rules))
-    for rule in rules:
-        info(
-            "validate",
-            "rule valid",
-            rule=rule.id,
-            path=rule.path.relative_to(rule.path.parents[3]),
-        )
     return 0
 
 

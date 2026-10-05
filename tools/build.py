@@ -4,7 +4,7 @@ import argparse
 import shutil
 
 from daclib import (
-    CLIENTS_FILE, SETTINGS_FILE, PROJECT_ROOT, ValidationError, arm_template,
+    SETTINGS_FILE, PROJECT_ROOT, ValidationError, arm_template,
     compile_rule, load_yaml, normalized_json, resolve_compiler_profile,
     resolve_rule_settings, sha256_text, validate_arm_document, validate_project,
 )
@@ -20,8 +20,10 @@ def main() -> int:
     try:
         rules = validate_project()
         rules_by_id = {r.id: r for r in rules}
-        clients = load_yaml(CLIENTS_FILE)["clients"]
-        settings = load_yaml(SETTINGS_FILE)["rules"]
+        from targets import resolve_targets
+        targets = resolve_targets(rules)
+        clients = {t.client: t.config for t in targets if t.platform == "microsoft-sentinel"}
+        settings = load_yaml(SETTINGS_FILE)["rules"] if clients else {}
 
         out = args.output.resolve()
         clients_out = out / "Clients"
@@ -53,9 +55,9 @@ def main() -> int:
                 profile = resolve_compiler_profile(client_cfg, rule)
                 cache_key = (rule.id, profile)
                 if cache_key not in compiled:
-                    info("compile", "compiling rule", rule=rule.id, profile=profile, compiler=args.compiler)
+                    info("sentinel-compile", "compiling rule", rule=rule.id, client=client, profile=profile, compiler=args.compiler)
                     compiled[cache_key] = compile_rule(rule, args.compiler, profile)
-                    info("compile", "rule compiled", rule=rule.id, profile=profile, compiler=args.compiler)
+                    info("sentinel-compile", "rule compiled", rule=rule.id, client=client, profile=profile, compiler=args.compiler)
 
                 effective_settings = resolve_rule_settings(settings[rule_id], client_cfg, rule_id)
                 arm = arm_template(rule, compiled[cache_key], effective_settings)
