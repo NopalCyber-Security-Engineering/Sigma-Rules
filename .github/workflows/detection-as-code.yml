@@ -73,11 +73,13 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
-          import json, os
+          import json, os, sys
           from pathlib import Path
           manifest = json.loads(Path('build/ms-sentinel/_build/build-manifest.json').read_text())
           rules = sum(len(v['rules']) for v in manifest['clients'].values())
-          sources = {r['source'] for v in manifest['clients'].values() for r in v['rules']}
+          sys.path.insert(0, 'tools')
+          from daclib import discover_rules
+          sources = discover_rules()
           clients = len(manifest['clients'])
           publish = os.getenv('PUBLISH_ENABLED') == 'true'
           event = os.getenv('EVENT_NAME')
