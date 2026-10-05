@@ -110,16 +110,27 @@ jobs:
 
       # CD starts only after a merge/push to main. Pull-request runs never receive
       # or use the target-repository credential.
+      - name: Generate MS-Sentinel GitHub App token
+        id: app-token
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PUBLISH_ENABLED == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: MS-Sentinel
+          permission-contents: write
+
       - name: Validate publish configuration
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PUBLISH_ENABLED == 'true' }}
         shell: bash
         env:
           TARGET_REPOSITORY: ${{ vars.MS_SENTINEL_REPOSITORY }}
-          TARGET_TOKEN: ${{ secrets.MS_SENTINEL_REPO_TOKEN }}
+          TARGET_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           [[ -n "$TARGET_REPOSITORY" ]] || { echo "::error title=Detection-as-Code publish::MS_SENTINEL_REPOSITORY is not configured"; exit 1; }
-          [[ -n "$TARGET_TOKEN" ]] || { echo "::error title=Detection-as-Code publish::MS_SENTINEL_REPO_TOKEN is not configured"; exit 1; }
+          [[ -n "$TARGET_TOKEN" ]] || { echo "::error title=Detection-as-Code publish::GitHub App token was not generated"; exit 1; }
           echo "DAC | INFO | stage=publish | repository=$TARGET_REPOSITORY | publish configuration valid"
 
       - name: Checkout MS-Sentinel target repository
@@ -127,7 +138,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: ${{ vars.MS_SENTINEL_REPOSITORY }}
-          token: ${{ secrets.MS_SENTINEL_REPO_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           path: target-ms-sentinel
           fetch-depth: 0
 
